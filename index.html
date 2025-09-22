@@ -135,7 +135,7 @@ y = C_1*sin(x) + C_2*cos(x)"></textarea>
             • יש להשתמש אך ורק בקבועים מהצורה: C_1, C_2, C_3 … עבור הפתרון ההומוגני<br/>
             • השתמשו בביטויים מתמטיים פשוטים לפתרון הפרטי<br/>
             • ניתן לכתוב sin(x), cos(x), exp(x) או ביטויים פולינומיים פשוטים<br/>
-            • ניתן להציג שבר בעזרת: \frac{1}{2} במצב LaTeX (תו ה-'\' צריך להופיע לפני הביטוי).
+            • ניתן להציג שבר בעזרת: \frac{1}{2} (תו ה-'\' צריך להופיע לפני הביטוי).
           </div>
         </section>
       </div>
@@ -302,6 +302,10 @@ function normalizeToPlain(s){
   t = t.replace(/\\frac\{1\}\{2\}/g, '0.5');
   t = t.replace(/\\frac\{(\d+)\}\{(\d+)\}/g, '$1/$2');
   
+  // Add multiplication after fractions when followed by variables/functions
+  // Handle cases like "0.5e^x" -> "0.5*e^x"
+  t = t.replace(/(0\.5|1\/2|\d+\/\d+)([a-zA-Z])/g, '$1*$2');
+  
   // Convert LaTeX subscripts to underscore format
   // Convert C_{1}, C_{2} to C_1, C_2
   t = t.replace(/C_\{(\d+)\}/g, 'C_$1');
@@ -313,7 +317,7 @@ function normalizeToPlain(s){
 }
 
 /* =========================
-   Checker (וריאציית פרמטרים) - NEW
+   Checker - COMPLETELY REWRITTEN FOR NEGATIVE DETECTION
    ========================= */
 const currentCheck = { type: null, homogeneousTerms: [], particularTerm: '', particularCoeff: 1 };
 
@@ -321,19 +325,31 @@ function checkVariationParametersSolution(userRaw) {
     if (!userRaw || !userRaw.trim()) return false;
     
     try {
-        // Normalize the input
-        const user = normalizeToPlain(userRaw).toLowerCase().replace(/\s+/g, '');
-        console.log('Checking normalized input:', user);
+        console.log('🔥 STARTING FRESH CHECK - VERSION 2.0 🔥');
+        console.log('Raw input:', userRaw);
         
-        // Split by + and - while keeping the operators
-        const terms = user.split(/([+\-])/).filter(t => t.trim() !== '');
-        console.log('Terms split:', terms);
+        // FIRST: Check for negative patterns in original LaTeX/Plain input
+        const originalLower = userRaw.toLowerCase();
+        console.log('Checking original input for negative patterns...');
         
-        // Combine terms with their signs
+        if (/-\s*\\frac\{1\}\{2\}/.test(originalLower) || 
+            /-\s*1\/2/.test(originalLower) || 
+            /-\s*0\.5/.test(originalLower)) {
+            console.log('❌ IMMEDIATE REJECTION: Found negative coefficient in original input');
+            return false;
+        }
+        
+        // Normalize input
+        const normalized = normalizeToPlain(userRaw).toLowerCase().replace(/\s+/g, '');
+        console.log('Normalized input:', normalized);
+        
+        // Split into signed terms
+        const terms = normalized.split(/([+\-])/).filter(t => t.trim() !== '');
         const signedTerms = [];
         let currentSign = '+';
         
-        for (let term of terms) {
+        for (let i = 0; i < terms.length; i++) {
+            const term = terms[i];
             if (term === '+' || term === '-') {
                 currentSign = term;
             } else if (term.trim()) {
@@ -344,85 +360,71 @@ function checkVariationParametersSolution(userRaw) {
         
         console.log('Signed terms:', signedTerms);
         
-        // Check for required terms
-        let hasCos = false, hasSin = false, hasExp = false;
+        // Check each term
         let cosCount = 0, sinCount = 0, expCount = 0;
         
         for (let term of signedTerms) {
+            console.log('🔍 Analyzing term:', term);
+            
+            const isNegative = term.startsWith('-');
             const cleanTerm = term.replace(/^[+\-]/, '');
             
             if (/^c(?:_?\d*)\*?cos\(x\)$/.test(cleanTerm) || /^cos\(x\)\*?c(?:_?\d*)$/.test(cleanTerm)) {
-                hasCos = true;
                 cosCount++;
-                console.log('Found cos term:', term);
+                console.log('✅ Found cos term:', term);
             } else if (/^c(?:_?\d*)\*?sin\(x\)$/.test(cleanTerm) || /^sin\(x\)\*?c(?:_?\d*)$/.test(cleanTerm)) {
-                hasSin = true;
                 sinCount++;
-                console.log('Found sin term:', term);
-            } else if (checkExpTerm(cleanTerm)) {
-                hasExp = true;
+                console.log('✅ Found sin term:', term);
+            } else if (/0\.5.*exp\(x\)|exp\(x\).*0\.5|1\/2.*exp\(x\)|exp\(x\).*1\/2/.test(cleanTerm)) {
+                console.log('🧮 Found potential exp term, checking sign and coefficient...');
+                
+                if (isNegative) {
+                    console.log('❌ REJECTION: Negative exp coefficient detected!');
+                    return false;
+                }
+                
+                // Check if coefficient is exactly 1/2 or 0.5
+                const hasCorrectCoeff = /^0\.5\*?exp\(x\)$|^exp\(x\)\*?0\.5$|^1\/2\*?exp\(x\)$|^exp\(x\)\*?1\/2$|^\(0\.5\)\*?exp\(x\)$|^exp\(x\)\*?\(0\.5\)$|^\(1\/2\)\*?exp\(x\)$|^exp\(x\)\*?\(1\/2\)$/.test(cleanTerm);
+                
+                if (!hasCorrectCoeff) {
+                    console.log('❌ REJECTION: Wrong exp coefficient - must be exactly 1/2 or 0.5');
+                    console.log('   Clean term was:', cleanTerm);
+                    return false;
+                }
+                
                 expCount++;
-                console.log('Found correct exp term:', term);
+                console.log('✅ Found correct positive exp term with 1/2 coefficient:', term);
             } else if (/exp\(x\)/.test(cleanTerm)) {
-                console.log('Found exp term with wrong/missing coefficient:', term);
+                console.log('❌ REJECTION: exp term without proper coefficient');
                 return false;
             } else {
-                console.log('Found invalid term:', term);
+                console.log('❌ REJECTION: Invalid term');
                 return false;
             }
         }
         
-        console.log('Counts - cos:', cosCount, 'sin:', sinCount, 'exp:', expCount);
+        console.log('📊 Final counts - cos:', cosCount, 'sin:', sinCount, 'exp:', expCount);
         
-        // Must have exactly one of each required term
+        // Check counts
         if (cosCount !== 1 || sinCount !== 1 || expCount !== 1) {
-            console.log('Wrong number of terms');
+            console.log('❌ REJECTION: Wrong number of terms');
             return false;
         }
         
-        // Check that we have at least 2 constants for homogeneous part
-        const constants = user.match(/c(?:_?\d+)/g) || [];
-        console.log('Constants found:', constants);
-        
+        // Check constants
+        const constants = normalized.match(/c(?:_?\d+)/g) || [];
         if (constants.length < 2) {
-            console.log('Not enough constants');
+            console.log('❌ REJECTION: Not enough constants');
             return false;
         }
         
-        console.log('All checks passed - answer is correct');
+        console.log('✅ ALL CHECKS PASSED - SOLUTION ACCEPTED');
         return true;
         
     } catch (err) {
-        console.error('Error in checkVariationParametersSolution:', err);
+        console.error('Error in checker:', err);
         return false;
     }
-}
-
-// Helper function to check if an exp term has the correct coefficient (1/2)
-function checkExpTerm(term) {
-    console.log('Checking exp term:', term);
-    
-    // Various acceptable formats for (1/2)*exp(x):
-    const validPatterns = [
-        /^0\.5\*?exp\(x\)$/,           // 0.5*exp(x) or 0.5exp(x)
-        /^exp\(x\)\*?0\.5$/,           // exp(x)*0.5 or exp(x)0.5
-        /^\(0\.5\)\*?exp\(x\)$/,       // (0.5)*exp(x)
-        /^exp\(x\)\*?\(0\.5\)$/,       // exp(x)*(0.5)
-        /^1\/2\*?exp\(x\)$/,           // 1/2*exp(x) or 1/2exp(x)
-        /^exp\(x\)\*?1\/2$/,           // exp(x)*1/2
-        /^\(1\/2\)\*?exp\(x\)$/,       // (1/2)*exp(x)
-        /^exp\(x\)\*?\(1\/2\)$/        // exp(x)*(1/2)
-    ];
-    
-    for (let pattern of validPatterns) {
-        if (pattern.test(term)) {
-            console.log('Matched pattern:', pattern);
-            return true;
-        }
-    }
-    
-    console.log('No valid pattern matched for term:', term);
-    return false;
 }
 
 /* =========================
